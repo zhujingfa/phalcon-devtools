@@ -27,6 +27,7 @@
         "psy/psysh": "@stable"
     },
     "require-dev": {
+        "squizlabs/php_codesniffer": "^2.8",
         "kherge/box": "^2.7"
     },
     "autoload": {
@@ -34,5 +35,5 @@
             "Phalcon\\" : "src/"
         }
     },
-    "bin": ["phalcon.php"]
+    "bin": ["phalcon"]
 }
