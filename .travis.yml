@@ -21,7 +21,7 @@ cache:
 
 env:
   global:
-    - PATH="$PATH:~/bin"
+    - PATH="$PATH:$HOME/bin"
     - PHALCON_VERSION="v3.1.2"
 
 before_install:
@@ -33,9 +33,10 @@ before_install:
 install:
     - (cd cphalcon/build; bash install &>/dev/null)
     - phpenv config-add cphalcon/tests/_ci/phalcon.ini
+    - mkdir -p $HOME/bin && ln -s $(pwd)/phalcon $HOME/bin/phalcon
 
 script:
-  - vendor/bin/phpcs
+    - vendor/bin/phpcs
 
 notifications:
     email:
