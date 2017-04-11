@@ -22,13 +22,12 @@
         "forum": "https://forum.phalconphp.com/"
     },
     "require": {
-        "php": ">=5.5",
-        "ext-phalcon": "~3.1",
-        "psy/psysh": "@stable"
+        "php": ">=5.5 <7.2",
+        "ext-phalcon": "^3.2",
+        "psy/psysh": "^0.8"
     },
     "require-dev": {
-        "squizlabs/php_codesniffer": "^2.8",
-        "kherge/box": "^2.7"
+        "squizlabs/php_codesniffer": "^2.8"
     },
     "autoload": {
         "psr-4" : {
