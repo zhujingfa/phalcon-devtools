@@ -31,7 +31,7 @@
     },
     "autoload": {
         "psr-4" : {
-            "Phalcon\\" : "scripts/Phalcon/"
+            "Phalcon\\" : "src/"
         }
     },
     "bin": ["phalcon.php"]
