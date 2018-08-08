@@ -361,7 +361,7 @@ class Model extends Component
                 continue;
             }
             $type = $this->getPHPType($field->getType());
-            $fieldName = $this->modelOptions->getOption('camelize') ? Utils::lowerCamelize($fieldName) : $field->getName();
+            $fieldName = $this->modelOptions->getOption('camelize') ? Utils::lowerCamelize($field->getName()) : $field->getName();
             $attributes[] = $snippet->getAttributes(
                 $type,
                 $useSettersGetters ? 'protected' : 'public',
