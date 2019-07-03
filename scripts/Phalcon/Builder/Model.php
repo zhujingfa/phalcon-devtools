@@ -94,6 +94,48 @@ class Model extends Component
     }
 
     /**
+     * @return ModelOption
+     */
+    public function getModelOptions()
+    {
+        return $this->modelOptions;
+    }
+
+    /**
+     * We should expect schema to be string|null
+     * OptionsAware throws when getting null option values
+     * so we need to handle shouldInitSchema logic with the raw $option array
+     *
+     * Should setSchema in initialize() only if:
+     * - $option['schema'] !== ''
+     *
+     * @return bool
+     */
+    public function shouldInitSchema()
+    {
+        return !isset($this->modelOptions->getOptions()['schema'])
+            || $this->modelOptions->getOptions()['schema'] !== '';
+    }
+
+    /**
+     * @return string
+     */
+    public function getSchema()
+    {
+        if ($this->modelOptions->hasOption('schema') && !empty($this->modelOptions->getOption('schema'))) {
+            $schema = $this->modelOptions->getOption('schema');
+        } else {
+            $schema = Utils::resolveDbSchema($this->modelOptions->getOption('config')->database);
+        }
+
+        if (!empty($schema)) {
+            return $schema;
+        }
+
+        throw new RuntimeException('Cannot find valid schema.  Set schema argument or set in config.');
+    }
+
+    /**
      * Module build
      *
      * @return mixed
@@ -102,6 +144,7 @@ class Model extends Component
     {
         $config = $this->modelOptions->getOption('config');
         $snippet = $this->modelOptions->getOption('snippet');
+        $schema = $this->getSchema();
 
         if ($this->modelOptions->hasOption('directory')) {
             $this->path->setRootPath($this->modelOptions->getOption('directory'));
@@ -153,15 +196,10 @@ class Model extends Component
 
         $initialize = [];
 
-        if ($this->modelOptions->hasOption('schema')) {
-            $schema = $this->modelOptions->getOption('schema');
-        } else {
-            $schema = Utils::resolveDbSchema($config->database);
-        }
-
-        if ($schema) {
+        if ($this->shouldInitSchema()) {
             $initialize['schema'] = $snippet->getThisMethod('setSchema', $schema);
         }
+
         $initialize['source'] = $snippet->getThisMethod('setSource', $this->modelOptions->getOption('name'));
 
         $table = $this->modelOptions->getOption('name');
@@ -180,7 +218,7 @@ class Model extends Component
                 }
 
                 $entityNamespace = '';
-                if ($this->modelOptions->getOption('namespace')) {
+                if ($this->modelOptions->hasOption('namespace')) {
                     $entityNamespace = $this->modelOptions->getOption('namespace')."\\";
                 }
 
@@ -198,8 +236,8 @@ class Model extends Component
 
         foreach ($db->describeReferences($this->modelOptions->getOption('name'), $schema) as $reference) {
             $entityNamespace = '';
-            if ($this->modelOptions->getOption('namespace')) {
-                $entityNamespace = $this->modelOptions->getOption('namespace');
+            if ($this->modelOptions->hasOption('namespace')) {
+                $entityNamespace = $this->modelOptions->getOption('namespace')."\\";
             }
 
             $refColumns = $reference->getReferencedColumns();
@@ -207,7 +245,7 @@ class Model extends Component
             $initialize[] = $snippet->getRelation(
                 'belongsTo',
                 $this->modelOptions->getOption('camelize') ? Utils::lowerCamelize($columns[0]) : $columns[0],
-                $this->getEntityClassName($reference, $entityNamespace),
+                $entityNamespace . Utils::camelize($reference->getReferencedTable()),
                 $this->modelOptions->getOption('camelize') ? Utils::lowerCamelize($refColumns[0]) : $refColumns[0],
                 "['alias' => '" . Text::camelize($reference->getReferencedTable(), '_-') . "']"
             );
@@ -219,6 +257,7 @@ class Model extends Component
         $alreadyFindFirst    = false;
         $alreadyColumnMapped = false;
         $alreadyGetSourced   = false;
+        $attributes          = [];
 
         if (file_exists($modelPath)) {
             try {
@@ -240,7 +279,7 @@ class Model extends Component
 
                 $linesCode = file($modelPath);
                 $fullClassName = $this->modelOptions->getOption('className');
-                if ($this->modelOptions->getOption('namespace')) {
+                if ($this->modelOptions->hasOption('namespace')) {
                     $fullClassName = $this->modelOptions->getOption('namespace').'\\'.$fullClassName;
                 }
                 $reflection = new ReflectionClass($fullClassName);
@@ -293,6 +332,107 @@ class Model extends Component
                         case 'getSource':
                             $alreadyGetSourced = true;
                             break;
+                    }
+                }
+
+                $possibleFields = [];
+                foreach ($fields as $field) {
+                    $possibleFields[$field->getName()] = true;
+                }
+                if (method_exists($reflection, 'getReflectionConstants')) {
+                    foreach ($reflection->getReflectionConstants() as $constant) {
+                        if ($constant->getDeclaringClass()->getName() != $fullClassName) {
+                            continue;
+                        }
+                        $constantsPreg = '/^(\s*)const(\s+)'.$constant->getName().'([\s=;]+)/';
+                        $endLine = $startLine = 0;
+                        foreach ($linesCode as $line => $code) {
+                            if (preg_match($constantsPreg, $code)) {
+                                $startLine = $line;
+                                break;
+                            }
+                        }
+                        if (!empty($startLine)) {
+                            $countLines = count($linesCode);
+                            for ($i = $startLine; $i < $countLines; $i++) {
+                                if (preg_match('/;(\s*)$/', $linesCode[$i])) {
+                                    $endLine = $i;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (!empty($startLine) && !empty($endLine)) {
+                            $constantDeclaration = join(
+                                '',
+                                array_slice(
+                                    $linesCode,
+                                    $startLine,
+                                    $endLine - $startLine + 1
+                                )
+                            );
+                            $attributes[] = PHP_EOL . "    " . $constant->getDocComment() .
+                                PHP_EOL . $constantDeclaration;
+                        }
+                    }
+                }
+
+                foreach ($reflection->getProperties() as $propertie) {
+                    $propertieName = $propertie->getName();
+
+                    if ($propertie->getDeclaringClass()->getName() != $fullClassName ||
+                        !empty($possibleFields[$propertieName])) {
+                        continue;
+                    }
+                    $modifiersPreg = '';
+                    switch ($propertie->getModifiers()) {
+                        case \ReflectionProperty::IS_PUBLIC:
+                            $modifiersPreg = '^(\s*)public(\s+)';
+                            break;
+                        case \ReflectionProperty::IS_PRIVATE:
+                            $modifiersPreg = '^(\s*)private(\s+)';
+                            break;
+                        case \ReflectionProperty::IS_PROTECTED:
+                            $modifiersPreg = '^(\s*)protected(\s+)';
+                            break;
+                        case \ReflectionProperty::IS_STATIC + \ReflectionProperty::IS_PUBLIC:
+                            $modifiersPreg = '^(\s*)(public?)(\s+)static(\s+)';
+                            break;
+                        case \ReflectionProperty::IS_STATIC + \ReflectionProperty::IS_PROTECTED:
+                            $modifiersPreg = '^(\s*)protected(\s+)static(\s+)';
+                            break;
+                        case \ReflectionProperty::IS_STATIC + \ReflectionProperty::IS_PRIVATE:
+                            $modifiersPreg = '^(\s*)private(\s+)static(\s+)';
+                            break;
+                    }
+                    $modifiersPreg = '/' . $modifiersPreg . '\$' . $propertieName . '([\s=;]+)/';
+                    $endLine = $startLine = 0;
+                    foreach ($linesCode as $line => $code) {
+                        if (preg_match($modifiersPreg, $code)) {
+                            $startLine = $line;
+                            break;
+                        }
+                    }
+                    if (!empty($startLine)) {
+                        $countLines = count($linesCode);
+                        for ($i = $startLine; $i < $countLines; $i++) {
+                            if (preg_match('/;(\s*)$/', $linesCode[$i])) {
+                                $endLine = $i;
+                                break;
+                            }
+                        }
+                    }
+                    if (!empty($startLine) && !empty($endLine)) {
+                        $propertieDeclaration = join(
+                            '',
+                            array_slice(
+                                $linesCode,
+                                $startLine,
+                                $endLine - $startLine + 1
+                            )
+                        );
+                        $attributes[] = PHP_EOL . "    " . $propertie->getDocComment() . PHP_EOL .
+                            $propertieDeclaration;
                     }
                 }
             } catch (\Exception $e) {
@@ -353,7 +493,6 @@ class Model extends Component
             }
         }
 
-        $attributes = [];
         $setters = [];
         $getters = [];
         foreach ($fields as $field) {
